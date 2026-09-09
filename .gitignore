@@ -14,3 +14,8 @@ contacts.csv
 call_results.json
 .dialer_state.json
 .dialer_state.json.lock
+
+/home/unisoft/Twillo-APP/output_results
+/home/unisoft/Twillo-APP/call_results.json
+/home/unisoft/Twillo-APP/client.csv
+/home/unisoft/Twillo-APP/contacts.csv
