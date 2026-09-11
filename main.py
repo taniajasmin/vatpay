@@ -111,6 +111,14 @@ def _state_write(updates: dict) -> dict:
         return state
 
 # ─── ElevenLabs TTS ────
+SENTENCE_PAUSE = "0.5s"  # silence inserted after each sentence
+
+def add_sentence_pauses(text: str, pause: str = SENTENCE_PAUSE) -> str:
+    """Insert an ElevenLabs <break> tag after every sentence so the
+    message doesn't race through the script."""
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    return f'<break time="{pause}" /> '.join(s for s in sentences if s)
+
 def generate_audio(text: str, output_path: str):
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}"
     headers = {
@@ -119,11 +127,12 @@ def generate_audio(text: str, output_path: str):
         "xi-api-key": ELEVENLABS_API_KEY
     }
     payload = {
-        "text": text,
+        "text": add_sentence_pauses(text),
         "model_id": "eleven_flash_v2_5",
         "voice_settings": {
             "stability": 0.45,
-            "similarity_boost": 0.75
+            "similarity_boost": 0.75,
+            "speed": 0.85
         }
     }
     resp = requests.post(url, json=payload, headers=headers)
@@ -153,7 +162,7 @@ else:
 static_texts = {
     "thank_you_goodbye_v4": "Thank you for your time. Goodbye.",
     "please_hold_v4": "Please hold while I transfer you to a VetPay representative.",
-    "sms_confirm_v5": "Thank you for your time. We will send you a detailed SMS on the process. Goodbye."
+    "sms_confirm_v5": "Thank you, you will receive a SMS shortly. Goodbye."
 }
 
 for key, txt in static_texts.items():
