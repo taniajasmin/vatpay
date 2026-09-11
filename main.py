@@ -894,17 +894,7 @@ def get_db():
 
 
 
-@app.on_event("startup")
-async def startup_event():
-    db = SessionLocal()
-    user = db.query(UserDB).filter(UserDB.username == "admin").first()
-    if not user:
-        # Change this line:
-        hashed = hash_password("admin123") 
-        new_user = UserDB(username="admin", hashed_password=hashed)
-        db.add(new_user)
-        db.commit()
-    db.close()
+# Note: no default admin is seeded — accounts are managed directly in users.db
 
 def hash_password(password: str) -> str:
     # Generate a salt and hash the password
