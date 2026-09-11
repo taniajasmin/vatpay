@@ -131,8 +131,7 @@ def generate_audio(text: str, output_path: str):
         "model_id": "eleven_flash_v2_5",
         "voice_settings": {
             "stability": 0.45,
-            "similarity_boost": 0.75,
-            "speed": 0.85
+            "similarity_boost": 0.75
         }
     }
     resp = requests.post(url, json=payload, headers=headers)
