@@ -577,28 +577,49 @@ async def twilio_voice(request: Request):
         return Response(str(vr), media_type="application/xml")
 
     # ── Human or unknown: play the full call flow ──
-    # IMPORTANT: audio must be INSIDE the <Gather>. Twilio does NOT buffer
-    # DTMF tones pressed during top-level <Play> verbs — if the caller presses
-    # 1/2 while the prompt is playing (the natural moment, right after hearing
-    # "...press 1..."), the digit is discarded because the Gather hasn't
-    # started yet. Nesting the <Play>s inside the Gather makes the digit
-    # capture active while the prompt is playing.
-    gather = Gather(
-        input="speech dtmf",
-        speech_timeout="auto",
+    # Two <Gather> verbs are used on purpose:
+    #
+    # 1. The audio prompt must live INSIDE a <Gather> — Twilio does NOT buffer
+    #    DTMF tones pressed during a top-level <Play>, so pressing 1/2 right
+    #    after "...press 1..." would be dropped if the <Play>s were outside.
+    # 2. If that single Gather used `input="speech dtmf"`, Twilio would
+    #    barge-in: stop the audio the instant it hears the caller say anything
+    #    (even "hello?" or background noise) and submit the partial result.
+    #    That's the "system stops when someone talks" bug.
+    #
+    # So the first Gather accepts ONLY DTMF, wrapping the audio — button
+    # presses during playback are captured, but speech is ignored and cannot
+    # interrupt the audio. If no keypress arrives, /twilio/transfer re-issues
+    # a second Gather that accepts speech + DTMF and has nothing playing, so
+    # callers who can't or don't press a button can still say "text me" or
+    # "transfer" afterwards.
+    gather_dtmf = Gather(
+        input="dtmf",
         timeout=20,
         num_digits=1,
-        action=f"{BASE_URL}/twilio/transfer?phone={phone}",
+        action=f"{BASE_URL}/twilio/transfer?phone={phone}&stage=dtmf",
         method="POST"
     )
     # 1) Personalized greeting
-    gather.play(f"{BASE_URL}/audio/hello_{phone}_v4.mp3")
+    gather_dtmf.play(f"{BASE_URL}/audio/hello_{phone}_v4.mp3")
     # 2) Full script (press-1 / press-2 prompt)
-    gather.play(f"{BASE_URL}/audio/common_message_v4.mp3")
+    gather_dtmf.play(f"{BASE_URL}/audio/common_message_v4.mp3")
+    vr.append(gather_dtmf)
 
-    vr.append(gather)
+    # 3) After the audio finishes, fall back to a speech-capable gather so
+    #    callers can still respond by voice (or by key) without interrupting
+    #    anything — there is no audio inside this gather to barge in on.
+    gather_speech = Gather(
+        input="speech dtmf",
+        speech_timeout="auto",
+        timeout=7,
+        num_digits=1,
+        action=f"{BASE_URL}/twilio/transfer?phone={phone}&stage=speech",
+        method="POST"
+    )
+    vr.append(gather_speech)
 
-    # 3) If nothing was pressed at all
+    # 4) If nothing was entered at all
     vr.play(f"{BASE_URL}/audio/thank_you_goodbye_v4.mp3")
 
     return Response(str(vr), media_type="application/xml")
@@ -638,14 +659,32 @@ async def transfer_call(request: Request):
 
     phone_raw = request.query_params.get("phone")
     phone = normalize_phone(phone_raw)
+    stage = request.query_params.get("stage", "dtmf")  # "dtmf" (audio wrap) or "speech" (post-audio)
 
     digits = form.get("Digits")
     speech = (form.get("SpeechResult") or "").lower()
 
-    print(f"[TRANSFER] phone={phone} digits={digits!r} speech={speech!r}")
+    print(f"[TRANSFER] phone={phone} stage={stage} digits={digits!r} speech={speech!r}")
 
     contact = contact_map.get(phone)
     name = contact["name"] if contact else "customer"
+
+    # First Gather timed out with no keypress — the audio finished and the
+    # caller didn't press 1 or 2. Give them a chance to respond by voice
+    # (or by key) by re-issuing a speech-capable gather. Without this
+    # branch we would either skip speech support entirely or hang up here.
+    if stage == "dtmf" and not digits:
+        vr = VoiceResponse()
+        vr.append(Gather(
+            input="speech dtmf",
+            speech_timeout="auto",
+            timeout=7,
+            num_digits=1,
+            action=f"{BASE_URL}/twilio/transfer?phone={phone}&stage=speech",
+            method="POST"
+        ))
+        vr.play(f"{BASE_URL}/audio/thank_you_goodbye_v4.mp3")
+        return Response(str(vr), media_type="application/xml")
 
     # Word-level matching (not substring) so words like "money"/"context"
     # don't accidentally trigger the "one"/"text" intents.
